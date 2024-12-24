@@ -36,7 +36,7 @@ long lastUpdate = 0;
 SoftwareSerial SerialAT(11, 10);  // RX, TX - TODO поменять местами (сделать RX 10, TX 11)
 #endif
 
-// #define TINY_GSM_DEBUG SerialMon
+// #define TINY_GSM_DEBUG SerialMon // раскомментировать для вывода отладочных сообщений библиотеки
 
 // Your GPRS credentials, if any
 const char apn[]      = "internet.mts.ru";
@@ -73,93 +73,24 @@ PubSubClient  mqtt(client);
 
 uint32_t lastReconnectAttempt = 0;
 
-void mqttCallback(char* topic, byte* payload, unsigned int len) {
-  // SerialMon.println(topic);
-  // SerialMon.write(payload, len);
-  // SerialMon.println();
-}
-
 boolean mqttConnect() {
-  // SerialMon.print(F("Connecting to "));
-  // SerialMon.print(broker);
+
   // Connect to MQTT Broker
   boolean status = mqtt.connect("SIM800l_REMOTE", user, psw);
 
   if (status == false) {
-    // SerialMon.println(F(" fail"));
     return false;
   }
-  // SerialMon.println(F(" success"));
-
-  // mqtt.subscribe("base/relay/led1");
+  // TODO подписаться на топики, которые хотим принимать
   return mqtt.connected();
 }
 
-enum EThermoState{
-  ETS_EstablishCarrier, // установка соединения
-  ETS_EstablishGPRS,  
-  ETS_Connect2mqtt,   // присоединение к серверу
-  ETS_PublishData     // Отправка данных
-};
-
-EThermoState thermoState = ETS_EstablishCarrier;
-
-class CBlink
+void watch_blink()
 {
-  boolean isOn = false;
-  uint32_t last_change_state = 0;
-  void SwitchOn()
-  {
-    digitalWrite(LED_BUILTIN, HIGH);
-    isOn = true;
-    last_change_state = millis();
-  }
-  void SwitchOff()
-  {
-    digitalWrite(LED_BUILTIN, LOW);
-    isOn = false;
-    last_change_state = millis();
-  }
-
-public:
-  void blink()
-  {
-      uint32_t t = millis();
-
-      // Моргаем только в режиме передачи. В остальных режимах большие задержки...
-      switch(thermoState)
-      {
-        case ETS_EstablishCarrier:
-            SwitchOff();
-          break;
-        case ETS_EstablishGPRS:
-            SwitchOff();
-          break;
-        case ETS_Connect2mqtt:
-          if(isOn)
-          {
-            if(t - last_change_state > 200) SwitchOff();
-          }
-          else
-          {
-            if(t - last_change_state > 200) SwitchOn();
-          }
-          break;
-        case ETS_PublishData:
-          if(isOn)
-          {
-            if(t - last_change_state > 200) SwitchOff();
-          }
-          else
-          {
-            if(t - last_change_state > 1000) SwitchOn();
-          }
-          break;
-      }
-  }
-};
-
-CBlink led13;
+  digitalWrite(LED_BUILTIN, HIGH);
+  delay(50);
+  digitalWrite(LED_BUILTIN, LOW);
+}
 
 void setup(void)
 {
@@ -207,8 +138,8 @@ void setup(void)
     // Restart takes quite some time
   // To skip it, call init() instead of restart()
   // SerialMon.println(F("Initializing modem..."));
-  // modem.restart();
-  modem.init();
+  modem.restart();
+  // modem.init();
 
   String modemInfo = modem.getModemInfo();
   // SerialMon.print(F("Modem Info: "));
@@ -217,13 +148,12 @@ void setup(void)
   // SerialMon.print(F("Waiting for network..."));
   if (!modem.waitForNetwork()) {
     SerialMon.println(F("waitForNetwork fail! Wait..."));
-    delay(10000);
+    delay(1000);
     return;
   }
   // SerialMon.println(F(" success"));
 
   if (modem.isNetworkConnected()) {
-    thermoState = ETS_EstablishGPRS;
     // SerialMon.println(F("Network connected"));
   }
 
@@ -232,13 +162,12 @@ void setup(void)
   // SerialMon.print(apn);
   if (!modem.gprsConnect(apn, gprsUser, gprsPass)) {
     SerialMon.println(F("GPRS connect fail! Wait..."));
-    delay(10000);
+    delay(1000);
     return;
   }
   // SerialMon.println(F(" success"));
 
   if (modem.isGprsConnected()) {
-    thermoState = ETS_Connect2mqtt;
     // SerialMon.println(F("GPRS connected"));
   }
 
@@ -270,20 +199,27 @@ void publishTemperature() {
 }
 
 long gsmConnectingsAttempts = 0;
+uint32_t loop_counter = 0;  // счетчик времени для индикации
 void loop(void)
 { 
-  led13.blink();
   // Make sure we're still registered on the network
-  if (!modem.isNetworkConnected()) {
+  if (!modem.isNetworkConnected()) 
+  {
+    SerialMon.print(F("Signal Quality:"));
+    SerialMon.println(modem.getSignalQuality(), DEC);
     if(gsmConnectingsAttempts > 3)
     {
+      SerialAT.end();
+      delay(100);
+      SerialAT.begin(38400);
+      delay(6000);
+      SerialMon.println(F("loop:restart modem"));
       modem.restart();
       gsmConnectingsAttempts = 0;
     }
     SerialMon.println("loop:network disconnected");
-    thermoState = ETS_EstablishCarrier;
-    led13.blink();
-    if (!modem.waitForNetwork(180000L, true)) {
+
+    if (!modem.waitForNetwork(/*180000L, true*/)) {
       SerialMon.println(F("Network disconnected! Wait..."));
       // SerialMon.println(F(" fail"));
       delay(10);
@@ -292,7 +228,9 @@ void loop(void)
     }
     if (modem.isNetworkConnected()) {
       // SerialMon.println(F("Network re-connected"));
-      thermoState = ETS_EstablishGPRS;
+      watch_blink();
+      delay(100);
+      watch_blink();
     }
 
     // and make sure GPRS/EPS is still connected
@@ -301,14 +239,15 @@ void loop(void)
       // SerialMon.print(F("Connecting to "));
       // SerialMon.print(apn);
       if (!modem.gprsConnect(apn, gprsUser, gprsPass)) {
-        led13.blink();
         SerialMon.println(F("!modem.gprsConnect. Wait..."));
         delay(10000);
         return;
       }
       if (modem.isGprsConnected()) {
-        thermoState = ETS_Connect2mqtt;
         // SerialMon.println(F("GPRS reconnected"));
+        watch_blink();
+        delay(100);
+        watch_blink();
       }
     }
   }
@@ -324,41 +263,27 @@ void loop(void)
         lastReconnectAttempt = 0;
       }
     }
-    delay(100);
+    watch_blink();
+    delay(20);
+    watch_blink();
+    delay(20);
+    watch_blink();
+    delay(20);
+    watch_blink();
+    delay(20);
     return;
   }
 
   // добрались сюда - можем передавать данные 
-  thermoState = ETS_PublishData;
   mqtt.loop();
   publishTemperature();
-  ////////////////////////////////////////////////////
-  // long t = millis();
-  // if((t - lastUpdate > 20000) || (t < lastUpdate)) // для отработки переполнения
-  // {
-  //   lastUpdate = t;
-  //   RequestAndPrintTemp();
-  // }
+  if(millis() - loop_counter > 2000)
+  {
+    loop_counter = millis();
+    watch_blink();
+  }
 }
 
-// void RequestAndPrintTemp()
-// {
-//   {
-//     sensors.requestTemperatures(); // Send the command to get temperatures
-//     // It responds almost immediately. Let's print out the data
-//     for(int i = 0; i < thermCnt; ++i)
-//     {
-//         printTemperature(insideThermometer[i], 0, 0, i+1); // Use a simple function to print out the data
-//     }
-
-//     // измерение напряжения на батарее/питании
-//     int a7 = analogRead(A7);
-//     float v = (a7 * 5.0) / 1024.0;
-//     // наличие внешнего питания 
-//     int d6 = digitalRead(6);
-//     Serial.println(" External: " + String(d6) + " Battery: " + String(v, 1));
-//   }
-// }
 
 // function to print a device address
 void printAddress(uint8_t id, DeviceAddress deviceAddress)
@@ -370,16 +295,3 @@ void printAddress(uint8_t id, DeviceAddress deviceAddress)
     Serial.print(deviceAddress[i], HEX);
   }
 }
-
-// // function to print the temperature for a device
-// void printTemperature(DeviceAddress deviceAddress, uint8_t x, uint8_t y, uint8_t id)
-// {
-//   float tempC = sensors.getTempC(deviceAddress);
-//   printAddress(id, deviceAddress);
-//   if(tempC == DEVICE_DISCONNECTED_C) 
-//   {
-//     Serial.println( " :err");
-//     return;
-//   }
-//   Serial.print(String(tempC < 0 ? " -" : " +") + String(abs(tempC) < 10 ? " " : "") + String(tempC, 0));
-// }
