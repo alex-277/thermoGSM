@@ -59,7 +59,7 @@ const char * topic_external = "bolier1/externalpower";
 #include <TinyGsmClient.h>
 #include <PubSubClient.h>
 
-#define PUB_DELAY (5 * 1000) /* данные шлем каждые 5 минут, для проверки */
+#define PUB_DELAY (1 * 60 * 1000L) /* данные шлем каждые x * 1000 секунд, для проверки */
 
 #ifdef DUMP_AT_COMMANDS
 #include <StreamDebugger.h>
@@ -96,6 +96,12 @@ void setup(void)
 {
   // встроенный светодиод для контроля
   pinMode(LED_BUILTIN, OUTPUT);
+  // Три зеленых свистка при старте
+  watch_blink();
+  delay(200);
+  watch_blink();
+  delay(200);
+  watch_blink();
   // контроль наличия внешнего питания
   pinMode(6, INPUT);
   // start serial port
@@ -187,13 +193,13 @@ void publishTemperature() {
     {
       sensors.requestTemperatures(); // Send the command to get temperatures
       float tempC = sensors.getTempC(insideThermometer[0]);
-      mqtt.publish(topic_temp, String(tempC).c_str());
+      mqtt.publish(topic_temp, String(tempC).c_str(), false);
     }
     int a7 = analogRead(A7);
     float v = (a7 * 5.0) / 1024.0;
-    mqtt.publish(topic_V, String(v).c_str());
+    mqtt.publish(topic_V, String(v).c_str(), false);
     int d6 = digitalRead(6);
-    mqtt.publish(topic_external, String(d6).c_str());
+    mqtt.publish(topic_external, String(d6).c_str(), false);
     last = now;
   }
 }
